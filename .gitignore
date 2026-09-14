@@ -1,0 +1,34 @@
+# Lab state: pinned artifacts, cached scan output, per-run summaries.
+# Nothing in here belongs in version control — it is rebuilt by
+# setup.py from tools.lock.json + versions.env + the fixture path.
+.cache/
+.venv/
+node_modules/
+
+# Milvus persistent state (Docker Compose volumes bind-mounted here so
+# the operator can inspect the on-disk index shape for the
+# `vector_store_local` and `portable_index` probes).
+volumes/
+
+# Ollama model cache (only present when using an in-repo OLLAMA_MODELS
+# override — the default install uses ~/.ollama).
+.ollama-models/
+
+# Fixture checkouts. Fixtures live outside this repo per fixtures/README.md
+# so an operator can point setup.py --index at any local clone. If you
+# ever check one in by mistake, this line saves the review.
+fixtures/gratibot/
+fixtures/liatrio-knowledge/
+
+# Harness transcripts and cost summaries land under the lab-state
+# directory the harness picks (default $XDG_CACHE_HOME/ai-code-intelligence/claude-context/
+# on macOS + Linux). If an operator overrides that with a path inside
+# the repo, ignore it here so no session transcript leaks into git.
+transcripts/
+harness-runs/
+
+# Local editor state.
+.env
+.env.local
+.DS_Store
+*.log

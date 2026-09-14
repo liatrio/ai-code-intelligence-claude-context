@@ -1,0 +1,68 @@
+{
+  "_comment": "Top-level release pins consumed by setup.py. claude-context ships as an npm package. Its MCP server is `@zilliz/claude-context-mcp`, which depends on `@zilliz/claude-context-core` for the indexing engine (splitters, embeddings, Milvus clients, Merkle sync). setup.py installs both via `npm install --prefix .cache/` into an isolated node_modules, then verifies advertised MCP tools match the pin. The FAQ 'fully-local' path substitutes Milvus (docker) for Zilliz Cloud and Ollama for OpenAI/VoyageAI/Gemini — this lock pins the local-only versions used by the lab. Bump claude_context_mcp.version here, run `npm view @zilliz/claude-context-mcp@<version> dist.integrity` on a supported host, and copy the sha512 into claude_context_mcp.integrity below (informational; npm itself is the enforcer).",
+
+  "claude_context_mcp": {
+    "version": "0.1.15",
+    "released_channel": "npm",
+    "repository": "https://github.com/zilliztech/claude-context",
+    "release_url_template": "https://www.npmjs.com/package/@zilliz/claude-context-mcp/v/{version}",
+    "install_via": "npm install (isolated prefix)",
+    "install_target": "@zilliz/claude-context-mcp@0.1.15",
+    "npm_registry": "https://registry.npmjs.org",
+    "integrity_source": "informational; enforced at install time by npm against the registry-published dist.integrity",
+    "node_engines": ">=20",
+    "licence": "MIT (source) — see LICENSE in @zilliz/claude-context-mcp"
+  },
+
+  "claude_context_core": {
+    "_comment": "Indexing engine and vector-db clients used by the MCP server. Version-locked to match claude_context_mcp.version so a coherent surface ships.",
+    "version": "0.1.15",
+    "released_channel": "npm",
+    "install_target": "@zilliz/claude-context-core@0.1.15",
+    "licence": "MIT"
+  },
+
+  "milvus": {
+    "_comment": "Local Milvus (standalone) is the vector backend for the fully-local path. Uses the Docker Compose recipe milvusdb ships in the Milvus repo; setup.py --check verifies the image tag matches this pin and the ports bound match .env.example.",
+    "image": "milvusdb/milvus",
+    "version": "v2.4.13",
+    "released_channel": "Docker Hub",
+    "repository": "https://github.com/milvus-io/milvus",
+    "compose_service": "milvus-standalone",
+    "bind_host_default": "127.0.0.1",
+    "grpc_port": 19530,
+    "licence": "Apache-2.0"
+  },
+
+  "milvus_etcd": {
+    "_comment": "Milvus standalone requires etcd for metadata; this is the version documented in the milvus-io docker compose recipe.",
+    "image": "quay.io/coreos/etcd",
+    "version": "v3.5.5",
+    "licence": "Apache-2.0"
+  },
+
+  "milvus_minio": {
+    "_comment": "Milvus standalone requires MinIO for object storage; version documented in the milvus-io docker compose recipe.",
+    "image": "minio/minio",
+    "version": "RELEASE.2023-03-20T20-16-18Z",
+    "licence": "AGPL-3.0-only (server); note the licence when embedding in commercial products"
+  },
+
+  "ollama": {
+    "_comment": "Local embedding provider. setup.py --check verifies Ollama is installed and reachable at OLLAMA_HOST (default 127.0.0.1:11434), then pulls the pinned embedding model. This replaces the OPENAI_API_KEY + OPENAI_BASE_URL path documented in the claude-context quickstart.",
+    "cli": "ollama",
+    "min_version": "0.3.0",
+    "install_url": "https://ollama.com/download",
+    "licence": "MIT",
+    "default_host": "127.0.0.1:11434"
+  },
+
+  "ollama_embedding_model": {
+    "_comment": "Local embedding model pulled by setup.py --install. nomic-embed-text is a 768-dim open-weights embedding model, ~137MB, well-suited to code because it was trained on mixed code + text corpora. claude-context's Ollama provider treats it as a drop-in replacement for OpenAI text-embedding-3-small at the same 768 dimension.",
+    "model": "nomic-embed-text",
+    "tag": "v1.5",
+    "dimension": 768,
+    "size_mb_approx": 274,
+    "licence": "Apache-2.0"
+  }
+}
