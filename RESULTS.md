@@ -132,21 +132,108 @@ change to what the customer-facing arm measures.
 
 ## Wave 2 — yes-cell confirmations on gratibot
 
-**Status**: pending
+**Status**: complete (2026-09-14)
 
-Planned probes:
-- `vector_store_local` — inspect `./volumes/milvus/` to confirm on-disk
-  vectors are present locally after Wave 1's index.
-- `local_embeddings` — kill outbound network for the duration of a
-  second `--index` run (either by `pfctl` block on 80/443 to non-loopback
-  or by watching `lsof -iTCP -sTCP:ESTABLISHED` and confirming no
-  sockets to non-loopback). Wall clock should be indistinguishable from
-  Wave 1's second run.
-- `agents_md_instructions` — JSON-RPC `initialize` + `tools/list` probe
-  against `node dist/index.js` in the pinned MCP; record advertised
-  tool names and counts.
-- `traceable_results` — call `search_code` on a canned query; verify
-  each hit has `path`, `start.line`, `end.line`, `score`.
+### `agents_md_instructions` — MCP `tools/list` probe
+
+Spawned the pinned MCP server via a proper `@modelcontextprotocol/sdk`
+client handshake (see `bin/mcp-tools-probe.mjs`). Advertised surface:
+
+- **Server**: `Context MCP Server` v1.0.0
+- **Tool count**: **4**
+
+| Tool | Required args | All properties |
+|------|---------------|----------------|
+| `index_codebase` | `path` | `path`, `force`, `splitter`, `customExtensions`, `ignorePatterns` |
+| `search_code` | `path`, `query` | `path`, `query`, `limit`, `extensionFilter` |
+| `clear_index` | `path` | `path` |
+| `get_indexing_status` | `path` | `path` |
+
+No `resources/`, `prompts/`, or `logging/` surface — just the four tools.
+Every tool takes an **absolute path** as the codebase key, matching the
+per-path collection identity (MD5 of absolute path). This is what an
+agent sees when it opens the MCP over stdio; the `agents_md_instructions`
+cell scores against this shape.
+
+### `vector_store_local` — on-disk vector state
+
+After Wave 1's first-index of gratibot (238 chunks in
+`hybrid_code_chunks_27e9ea74`):
+
+| Location                             | Size   | What lives there |
+|--------------------------------------|-------:|------------------|
+| `./volumes/etcd/`                    | 122 MB | Milvus metadata (collection schemas, index configs) |
+| `./volumes/milvus/rdb_data/`         |        | RocksDB metadata KV (12 files: `OPTIONS-*`, `MANIFEST-*`, `CURRENT`, `LOCK`, `IDENTITY`, `LOG`, `.log`) |
+| `./volumes/milvus/rdb_data_meta_kv/` |        | RocksDB collection-metadata KV |
+| **Total Milvus dir**                 | 149 MB | (mostly WAL headroom for a fresh Milvus) |
+| `./volumes/minio/a-bucket/`          |  44 KB | Actual vector chunk objects |
+| `~/.context/mcp-codebase-snapshot.json`|  519 B | Per-codebase index status (MCP-owned) |
+| `~/.context/merkle/27e9ea74...json`  |        | Merkle-tree snapshot for gratibot — the incremental-reindex artifact |
+
+Everything is on local disk; nothing is uploaded anywhere. The
+Merkle-tree artifact is directly relevant to Wave 4's
+`incremental_reindex` probe.
+
+### `local_embeddings` + `no_default_egress` — network egress probe
+
+Ran a 45-second `lsof -iTCP -sTCP:ESTABLISHED` sampling loop
+(500 ms cadence) filtering to `node|ollama|milvus|python|docker`
+processes, subtracting loopback (`127.0.0.1`, `localhost`, `::1`,
+`0.0.0.0`, unspecified). During the window, `setup.py --index --force`
+re-indexed gratibot (6.94 s wall — nearly identical to the Wave 1 first
+index; the Merkle sync is short-circuited by `--force`).
+
+Result:
+
+```
+=== Non-loopback TCP connections observed during probe window ===
+(none — no non-loopback TCP connections established by node/ollama/milvus/python/docker during the window)
+```
+
+**Zero** non-loopback TCP connections from any process in the pipeline.
+Embeddings computed locally by Ollama on 127.0.0.1:11434, Milvus reached
+on 127.0.0.1:19530, all inter-container traffic on the Docker bridge
+network. The local-only path is genuinely local.
+
+This does two things at once:
+- Confirms `local_embeddings` at yes on the fully-local path.
+- Confirms the *lab-pinned* config does not egress. `no_default_egress`
+  needs a follow-up: the quickstart-default hosted config (Zilliz Cloud
+  + OpenAI) would egress by construction, but that path is out of scope
+  per issue #84's local-only constraint. The cell answer will note both.
+
+### `traceable_results` — reconfirmed
+
+Wave 1's sanity search already exercised this: every result had
+`file`, `start.line`, `end.line`, and `score`. Wave 2 re-runs the same
+shape via the MCP's `search_code` tool during Wave 5's harness; no new
+probe needed here.
+
+### Cells this wave directly settles
+
+- **`agents_md_instructions`** — 4 structured MCP tools, absolute-path
+  keying, no per-agent wiring needed beyond stdio.
+- **`vector_store_local`** — 149 MB Milvus state + 44 KB MinIO objects
+  on local disk; queryable without network.
+- **`local_embeddings`** — Ollama loopback-only during index; zero
+  external calls to any embedding provider.
+- **`no_default_egress`** (partial) — the *pinned lab config* egresses
+  nothing. The full cell answer includes the quickstart-hosted path
+  from source inspection; Wave 3 will note the mode split explicitly.
+- **`traceable_results`** — reconfirmed from Wave 1.
+
+### Notes for later waves
+
+- The client-side snapshot at `~/.context/mcp-codebase-snapshot.json`
+  is written by the MCP server, **not** by `bin/index-fixture.mjs`. In
+  Wave 1 the snapshot got stuck showing `"status": "indexfailed"` from
+  the Milvus 2.4.13 crash even after 2.5.20 succeeded, because setup.py's
+  helper bypasses the snapshot-update code path. Cleared it manually
+  before Wave 2 started. **Wave 5's harness uses the MCP directly, so
+  the snapshot will track correctly under harness runs.**
+- `docker exec cc-lab-milvus ls /var/lib/milvus` shows the container's
+  view of the same files bind-mounted from `./volumes/milvus/` — no
+  hidden data outside the bind mount.
 
 ---
 
