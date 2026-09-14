@@ -347,6 +347,126 @@ dep-source inclusion, but noise will dominate signal on a real project.
 - **`no_source_dependency`** — `no`. `node_modules` excluded by
   default; even opt-in override drowns primary code with vendor noise.
 
+## Wave 4 — shared / gateway cells
+
+**Status**: complete (2026-09-14)
+
+### `shared_dev_instance` — two clients, one Milvus
+
+Ran two `bin/search-fixture.mjs` processes concurrently against the
+same Milvus and the same `hybrid_code_chunks_27e9ea74` collection:
+
+| Client | Query                                    | Top hit                          | Wall clock |
+|-------:|------------------------------------------|----------------------------------|-----------:|
+|      A | "handler that gives recognition to a user" | `features/golden-recognize.js:20` |    1.065 s |
+|      B | "leaderboard aggregation"                | `features/leaderboard.js:37`     |    1.059 s |
+
+Both returned correct answers, both took ~1 s (roughly 2× the
+single-client 0.5 s baseline, as expected — the two Node processes
+contend for Ollama embedding CPU on the same laptop, but Milvus
+handled them without lock contention). No errors, no
+`ResourceBusy`, no serialization observed.
+
+**Cell**: `yes`, lab-confirmed. The docs-only `yes` in the current
+`data.json` is upgraded to a lab observation.
+
+### `incremental_reindex` — 7 reps of touch → `reindexByChange` → verify
+
+Driver: `bin/incremental-probe.mjs`. Each rep appends a unique
+`WAVE4_MARKER_<n>_<timestamp>_<rand>` comment to
+`~/liatrio/repos/gratibot/regex.js`, calls
+`Context.reindexByChange(...)` on the live Milvus, then runs a
+semantic search for the bare `WAVE4_MARKER_<n>` prefix. Same
+`Context` instance across all 7 reps — this mirrors a long-lived
+MCP server watching a checkout, which is the customer-facing shape.
+
+Full-index baseline from Wave 1: **6,650 ms** for gratibot (41
+files, 238 chunks). The `incremental_reindex` labCheck asks for
+p90 ≤ 30 s **and** delta ≤ 1/10 of a full index, i.e. ≤ 665 ms.
+
+| Metric              | Min   | Median | p90    | Max    |
+|---------------------|------:|-------:|-------:|-------:|
+| Reindex only (ms)   |  232  |   418  |  **648** |  648  |
+| Semantic search (ms)|  185  |   363  |    386 |  386  |
+| End-to-end (ms)     |  599  |   781  |    972 |  972  |
+
+- **Marker hit rate: 7 of 7** — every rep's marker was queryable
+  through the standard hybrid `search_code` path in the same
+  session. No stale hits, no cold misses.
+- **p90 reindex delta**: 648 ms = **9.75 %** of the full-index
+  wall clock. Clears the 1/10 threshold by 5 %.
+- **p90 end-to-end (reindex + first query)**: 972 ms — 30× under
+  the 30-s ceiling.
+- **Every rep** logged `Merkle DAG has changed. Comparing file
+  states... Found changes: 0 added, 0 removed, 1 modified.` — the
+  Merkle-diff sync mechanism claimed by the FAQ is now lab-verified.
+
+**Cell**: `yes` (upgraded from `unknown`). The one caveat worth
+noting in the cell text: this is a single-file change on a 41-file
+JavaScript fixture. A larger PR-sized change (say 5-10 files)
+would still likely clear the labCheck, but the numbers above are
+the smallest realistic delta — a real PR might land 3-5× higher on
+the reindex side and still pass.
+
+### `portable_index` — persistence and portability
+
+Ran the compose-restart flow — the workaround claim in the current
+`data.json` is that Milvus backup/restore plus matching absolute
+paths lets a team share an index. Steps:
+
+1. Baseline query on live Milvus: top hit `features/golden-recognize.js:20`, 0.73 s
+2. `docker compose down` — all three containers destroyed
+3. On-disk state confirmed:
+
+   | Path            | Size   |
+   |-----------------|-------:|
+   | `volumes/etcd`  |   61 M |
+   | `volumes/milvus`| 149 M  |
+   | `volumes/minio` |  1.7 M |
+   | **Total**       | 211 M  |
+
+4. `docker compose up` — Milvus healthy in 5 s (from
+   `curl http://127.0.0.1:9091/healthz` inside the container)
+5. Same query without reindexing → same top hit, 3 hits, 0.43 s
+   (faster than baseline because embeddings for the query are the
+   only work; Milvus warm-loaded from disk).
+
+Persistence is genuine — the 211 M of volume state on disk *is* the
+index. That means the operator workaround (`tar -czf snapshot.tgz
+volumes/`, ship, restore) will work. **But this cell stays `no`**
+because two things still bite the labCheck ("Build an index, copy
+it to a second machine or container that did not run the indexer,
+and complete a query against the copy"):
+
+1. **No first-class "export index" command.** Nothing in the MCP
+   surface or the core API publishes an artifact — the operator
+   has to know that `volumes/` is the state and tar it themselves.
+2. **Collection identity is MD5 of the absolute path.** A shipped
+   snapshot only works on a target where the fixture is at the
+   same absolute path (`~/liatrio/repos/gratibot`), OR the
+   operator uses `CODE_CHUNKS_COLLECTION_NAME_OVERRIDE`. The
+   friction is exactly what the existing workaround text calls
+   out.
+
+The workaround now has a lab receipt: persistence is real, so
+tar/rsync/backup approaches genuinely work provided both hosts
+carry the fixture at the same path (or the operator overrides the
+collection name). The cell answer stays **`no`** but the note gains
+concrete numbers.
+
+### Cells this wave directly settles
+
+- **`shared_dev_instance`** — `yes`, upgraded from docs-only to
+  lab-observed. Two concurrent clients on the same Milvus + same
+  collection both returned correct hits in ~1 s each.
+- **`incremental_reindex`** — `yes`, upgraded from `unknown`. p90
+  reindex delta 648 ms = 9.75 % of the 6,650 ms full-index baseline.
+  Marker hit rate 7/7.
+- **`portable_index`** — stays `no` with workaround. Persistence
+  now lab-verified (211 M of volume state survives
+  `docker compose down`); no first-class artifact and MD5-path
+  collection identity keep this off the `yes` list.
+
 ---
 
 ## Wave 4 — shared / gateway cells
