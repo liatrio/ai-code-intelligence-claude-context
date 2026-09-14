@@ -239,21 +239,113 @@ probe needed here.
 
 ## Wave 3 — no-cell and defaults confirmations
 
-**Status**: pending
+**Status**: complete (2026-09-14)
 
-Planned probes:
-- `no_default_egress` — this is the headline probe. Run in two modes,
-  captured 30s each with `lsof -iTCP -sTCP:ESTABLISHED`:
-  1. **Stock quickstart** (out of scope for the lab but documented
-     here for completeness): if the README's Zilliz + OpenAI env vars
-     were set, what would leak. Recorded from source inspection only,
-     not measured, because the lab refuses to run that path.
-  2. **Local-only** (the pinned lab path): measured. Expect zero
-     non-loopback sockets during boot and a Wave-1 index.
-- `semantic_cache` — five back-to-back searches of the same query
-  against the same collection; wall clock and result determinism.
-- `no_source_dependency` — populate `node_modules/` in gratibot, verify
-  claude-context respects `.gitignore` and does not index it.
+### `no_default_egress` — hosted quickstart path (source inspection)
+
+Wave 2 established that the *lab-pinned* local-only config makes zero
+outbound TCP calls. Wave 3 completes the picture by documenting what
+the quickstart-default config does, straight from the source at
+`node_modules/@zilliz/claude-context-mcp/dist/config.js`:
+
+```js
+// config.js line 66
+embeddingProvider: envManager.get('EMBEDDING_PROVIDER') || 'OpenAI',
+```
+
+And the Milvus default (line 82):
+
+```js
+milvusAddress: envManager.get('MILVUS_ADDRESS'), // Optional, can be resolved from token
+milvusToken: envManager.get('MILVUS_TOKEN'),
+```
+
+With no env vars set, claude-context defaults to:
+
+- **Embedding provider: OpenAI** — requires `OPENAI_API_KEY` and talks
+  to `api.openai.com` for every embedding call.
+- **Milvus: auto-resolve from `MILVUS_TOKEN`** — this is the Zilliz
+  Cloud path (no local Milvus assumed by default).
+
+So the *default zero-config path* is OpenAI + Zilliz Cloud, exactly what
+the portfolio doc's essay asserts. An operator following the quickstart
+gets a config that egresses to two hosted endpoints; making it local
+requires knowing `EMBEDDING_PROVIDER=Ollama` and `MILVUS_ADDRESS=127.0.0.1:19530`
+from the FAQ, not from the top of the README.
+
+The **`no_default_egress` cell answer** is therefore **`no`** — for a
+first-time user, the default path egresses. `workaround` is the set of
+env vars pinned in this lab's `versions.env`.
+
+### `semantic_cache` — 5 back-to-back identical queries
+
+Query: `"handler that gives recognition to a user"`, `limit=5`, against
+gratibot's hybrid collection. Between-run cadence is only Python + Node
+process startup (~500 ms), so any answer cache would show up clearly.
+
+| Run | Wall (s) | Top hit                                      | Top score |
+|----:|---------:|----------------------------------------------|----------:|
+|   1 |    0.643 | `features/golden-recognize.js:20`            | 0.009901  |
+|   2 |    0.564 | `features/golden-recognize.js:20`            | 0.009901  |
+|   3 |    0.533 | `features/golden-recognize.js:20`            | 0.009901  |
+|   4 |    0.704 | `features/golden-recognize.js:20`            | 0.009901  |
+|   5 |    0.513 | `features/golden-recognize.js:20`            | 0.009901  |
+
+- **Mean wall clock**: 0.591 s, **spread**: 0.191 s.
+- **Top hit and score identical on every run** — deterministic, but that
+  is a property of the underlying vectors, not a semantic cache.
+- Flat wall-clock distribution: run 5 (0.513 s) is faster than run 1
+  (0.643 s), which is the opposite of what an answer-cache pattern
+  would look like (a cache would put run 1 at ~0.6 s and runs 2–5
+  clustered around 0.05 s).
+
+**Cell: `no`.** Every semantic search re-runs Ollama's `nomic-embed-text`
+on the query, then re-runs Milvus's hybrid retrieval. Nothing between
+identical queries is memoised.
+
+### `no_source_dependency` — dependency-source probe
+
+Gratibot has `node_modules/` populated (476 top-level entries) with
+`.js` files scattered across every package's `dist/`, `lib/`, etc.
+Counts:
+
+| Location                                     | `.js` count |
+|----------------------------------------------|------------:|
+| Total in fixture                             | 9,313       |
+| Inside `node_modules/`                       | 9,232       |
+| Outside `node_modules/` (repo code + tests)  |    81       |
+| **Actually indexed by claude-context**       |    **41**   |
+
+The 40 non-indexed non-`node_modules` files are all under `test/**` —
+matching claude-context's default ignore pattern for test directories.
+The 9,232 `node_modules` files are ignored by the default ignore
+pattern for `node_modules`.
+
+**Read**: claude-context's default ignore patterns exclude dependency
+source *even when it is present on disk*. That means:
+
+- A dependency **whose source is not present** is definitely not
+  answerable — the tool wouldn't scan it even if you added it.
+- A dependency **whose source IS present** is still not answerable
+  without the operator explicitly overriding
+  `customIgnorePatterns` / `customExtensions` on the
+  `index_codebase` call — an opt-in the vendor recommends against
+  because it dilutes the collection with vendor code.
+
+**Cell: `no`** (documentation-adjacent tool — DocsGPT / RAGFlow / Context7 —
+is the right shape for this question). `workaround`: pass
+`customIgnorePatterns=[]` and pin `customExtensions` to force
+dep-source inclusion, but noise will dominate signal on a real project.
+
+### Cells this wave directly settles
+
+- **`no_default_egress`** — `no`. Quickstart defaults egress to OpenAI +
+  Zilliz Cloud; the fully-local config used by this lab is available
+  but is *not* the default. Note captures the mode split.
+- **`semantic_cache`** — `no`. Recomputes every query; 0.19 s spread
+  across 5 runs is process noise, not a cache signal.
+- **`no_source_dependency`** — `no`. `node_modules` excluded by
+  default; even opt-in override drowns primary code with vendor noise.
 
 ---
 
