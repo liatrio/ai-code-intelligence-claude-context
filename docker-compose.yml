@@ -29,9 +29,13 @@ services:
       - ETCD_SNAPSHOT_COUNT=50000
     volumes:
       - ./volumes/etcd:/etcd
-    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
-    ports:
-      - "127.0.0.1:2379:2379"
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    # Deliberately no `ports:` — etcd is only spoken to by Milvus over the
+    # internal Docker network at `etcd:2379`. Wave 1 caught a Docker Desktop
+    # host-port bind failure on 2379 (address reported as in use even when
+    # lsof shows nothing); the simplest fix is to stop exposing the port at
+    # all, which is also stricter under `no_default_egress` because there
+    # is no host-visible listener to enumerate.
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 30s
@@ -40,13 +44,19 @@ services:
 
   minio:
     container_name: cc-lab-minio
-    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    # Note: MinIO no longer publishes to Docker Hub's `minio/minio` namespace;
+    # the canonical registry is quay.io. Wave 1 caught this — `docker pull
+    # minio/minio` returns "pull access denied for minio/minio, repository
+    # does not exist" even for `:latest`. The tag on quay.io matches the
+    # pinned RELEASE stamp verbatim.
+    image: quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z
     environment:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
-    ports:
-      - "127.0.0.1:9001:9001"
-      - "127.0.0.1:9000:9000"
+    # Deliberately no `ports:` — MinIO only serves Milvus, over the internal
+    # Docker network at `minio:9000`. Same reasoning as etcd: nothing outside
+    # the compose stack needs to touch MinIO, and not exposing it keeps the
+    # `no_default_egress` probe honest (no host-visible listener).
     volumes:
       - ./volumes/minio:/minio_data
     command: minio server /minio_data --console-address ":9001"
@@ -58,7 +68,15 @@ services:
 
   milvus-standalone:
     container_name: cc-lab-milvus
-    image: milvusdb/milvus:v2.4.13
+    # v2.4.13 was the initial pin, but Wave 1 caught a BM25 sparse-index
+    # incompatibility: `createHybridCollection` succeeds but loading the
+    # collection then fails with `there is no vector index on field:
+    # [sparse_vector]`. This is a known issue between older Milvus
+    # sparse-vector support and @zilliz/milvus2-sdk-node@3.x, which does
+    # not send a sparse-index spec that 2.4 accepts. v2.5.x is where
+    # sparse-vector (BM25 hybrid) support stabilises to the shape the
+    # SDK expects — the collection now loads on first attempt.
+    image: milvusdb/milvus:v2.5.20
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined

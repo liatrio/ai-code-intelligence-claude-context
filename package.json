@@ -1,0 +1,15 @@
+{
+  "_comment": "Root package.json for the claude-context lab. Not a published package — this exists solely so Node's ESM resolver can find @zilliz/claude-context-core when bin/index-fixture.mjs runs. setup.py --install writes dependencies into ./node_modules here; nothing about this file is intended for consumption by npm publish or a workspace tool.",
+  "name": "ai-code-intelligence-claude-context",
+  "private": true,
+  "version": "0.0.0-lab",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@zilliz/claude-context-mcp": "0.1.15",
+    "@zilliz/claude-context-core": "0.1.15"
+  },
+  "license": "MIT"
+}

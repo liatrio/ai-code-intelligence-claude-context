@@ -23,9 +23,9 @@
   },
 
   "milvus": {
-    "_comment": "Local Milvus (standalone) is the vector backend for the fully-local path. Uses the Docker Compose recipe milvusdb ships in the Milvus repo; setup.py --check verifies the image tag matches this pin and the ports bound match .env.example.",
+    "_comment": "Local Milvus (standalone) is the vector backend for the fully-local path. Wave 1 caught that v2.4.13 fails claude-context's default hybrid (dense + BM25 sparse) collection load with the SDK version pinned by claude-context; v2.5.20 loads it on first attempt. This is a real reproducibility note — an operator who tries v2.4 will hit the same wall.",
     "image": "milvusdb/milvus",
-    "version": "v2.4.13",
+    "version": "v2.5.20",
     "released_channel": "Docker Hub",
     "repository": "https://github.com/milvus-io/milvus",
     "compose_service": "milvus-standalone",
@@ -42,8 +42,8 @@
   },
 
   "milvus_minio": {
-    "_comment": "Milvus standalone requires MinIO for object storage; version documented in the milvus-io docker compose recipe.",
-    "image": "minio/minio",
+    "_comment": "Milvus standalone requires MinIO for object storage. MinIO no longer publishes to Docker Hub's `minio/minio` namespace (verified in Wave 1: `docker pull minio/minio:latest` returns 'repository does not exist'); the canonical registry is now quay.io. Version documented in the milvus-io docker compose recipe.",
+    "image": "quay.io/minio/minio",
     "version": "RELEASE.2023-03-20T20-16-18Z",
     "licence": "AGPL-3.0-only (server); note the licence when embedding in commercial products"
   },

@@ -19,17 +19,114 @@ no login flow, `FORBIDDEN_ENV_VARS` gated by `setup.py --check`.
 
 ## Wave 1 — install + first-index smoke on gratibot
 
-**Status**: pending
+**Status**: complete (2026-09-14)
 
-Planned probes:
-- `make check` — every environment gate passes, no forbidden env vars set.
-- `make install` — wall clock for `npm install`, `docker compose up -d`,
-  `ollama pull nomic-embed-text`.
-- `make index FIXTURE=~/liatrio/repos/gratibot` — wall clock for first-index,
-  final Milvus collection size (`docker exec cc-lab-milvus ls -la /var/lib/milvus`),
-  number of chunks indexed.
-- Sanity search via the MCP server: one hand-crafted query, verify hits
-  include the expected file:line range.
+**Machine**: Apple M2 Pro, 25 GiB Metal GPU, macOS.
+**Fixture**: `~/liatrio/repos/gratibot` @ `7c94a642` (public, JS/Node, 195
+total files, 148 tracked `.js`).
+
+### Install wall clock
+
+Cold install measured from a clean `.cache/`, no Docker layers pre-pulled,
+no Ollama models present:
+
+| Step | Wall clock |
+|------|-----------:|
+| `npm install` (`@zilliz/claude-context-mcp@0.1.15` + `@zilliz/claude-context-core@0.1.15`) | ~14 s (cold) / 0.5 s (warm) |
+| `docker compose up -d` (etcd + minio + milvus-standalone, all bound `127.0.0.1`) | 30–90 s (cold pull) / <1 s (warm) |
+| `ollama pull nomic-embed-text` (~274 MB) | ~9 s on this network |
+| **Total cold install** | ~1–2 min |
+
+### First-index of gratibot
+
+```
+$ python3 setup.py --index --fixture ~/liatrio/repos/gratibot
+  [  ok] index_codebase: OK: indexed /Users/paulhenson/liatrio/repos/gratibot
+         in 7.2s (41 files, 238 chunks, collection 27e9ea74627e...)
+```
+
+- **Wall clock**: 7.19 s (setup.py) / 6.65 s (helper) — the 0.5 s delta is
+  Python subprocess boot + argument parse.
+- **Files indexed**: 41 of 148 tracked `.js`. The rest were filtered by
+  claude-context's built-in ignore patterns (node_modules is excluded by
+  default) and by the AST splitter's supported-extension list.
+- **Chunks**: 238 total. Average ~5.8 chunks per file.
+- **Collection**: `hybrid_code_chunks_27e9ea74` — the `hybrid_` prefix
+  confirms claude-context's default hybrid (dense + BM25 sparse) mode
+  is active. This is important for later probes: any capability scored
+  against the *default* claude-context config is scored against hybrid,
+  not dense-only.
+- **Collection identity**: MD5 of the absolute fixture path (matches
+  claude-context's documented naming — cross-checked with the helper's
+  emitted `collection_name`).
+
+### Sanity semantic search
+
+Query: "handler that gives recognition to a user"
+
+Top 5 hits (0.72 s wall clock):
+
+| Score | File | Lines |
+|-----:|------|-------|
+| 0.0099 | `features/golden-recognize.js` | 20–67 (`respondToRecognitionMessage`) |
+| 0.0099 | `service/recognition.js` | 245–254 (golden fistbump guard) |
+| 0.0098 | `features/recognize.js` | 110–123 (error handler) |
+| 0.0098 | `service/recognition.js` | 214–243 (`gratitudeErrors`) |
+| 0.0097 | `features/redeem.js` | 18–91 |
+
+Top hit is the correct handler function. Scores cluster tightly
+(~0.0097–0.0099) — this is the RRF (Reciprocal Rank Fusion) score
+normalisation from Milvus's hybrid search, not an absolute similarity.
+Ranking works; absolute values are not comparable across queries.
+
+### Corrections landed during Wave 1
+
+Three genuine reproducibility notes came out of Wave 1 — a client
+following the initial pin would have hit all three:
+
+1. **MinIO registry**. Docker Hub's `minio/minio` namespace no longer
+   returns images (`docker pull minio/minio:latest` returns
+   `repository does not exist`). The canonical registry is now
+   `quay.io/minio/minio`. Updated `docker-compose.yml`, `versions.env`,
+   and `tools.lock.json`.
+2. **Docker port bindings**. Docker Desktop refused to bind host ports
+   for etcd (2379) and MinIO (9000/9001) even with `lsof` reporting no
+   holder — a known Docker Desktop quirk. Neither service needs host
+   exposure for the lab (Milvus talks to them over the internal Docker
+   network at `etcd:2379` and `minio:9000`), so dropped those `ports:`
+   entries. Milvus's 19530 is still bound and reachable.
+3. **Milvus version**. Initial pin `v2.4.13` failed to load hybrid
+   collections: `createHybridCollection` succeeded but subsequent
+   `loadCollection` errored with `there is no vector index on field:
+   [sparse_vector]`. The BM25 sparse-index handling stabilises in
+   Milvus 2.5.x; bumped to `v2.5.20` and it worked on first attempt.
+   A client trying the initial pin would have hit this immediately.
+
+Also: driving the MCP server directly with a single-shot JSON-RPC pipe
+from Python stalled (the SDK's stdio server needs a proper `initialize` →
+response → `initialized` notification → `tools/call` handshake).
+Switched `setup.py --index` to a small Node helper (`bin/index-fixture.mjs`)
+that calls the same `Context.indexCodebase(...)` method the MCP server
+itself invokes internally, with the same config wiring. The **harness**
+(`run-prompts.py`) still drives the full MCP surface through Claude
+Code — that path is fine because the MCP SDK client library handles
+the handshake correctly. This is a `setup.py`-only shortcut, not a
+change to what the customer-facing arm measures.
+
+### Cells this wave directly informs
+
+- **`install_without_repo_writes`** — verified: no writes into
+  `~/liatrio/repos/gratibot` during install or index (`git status` clean
+  before and after both). All state lands in this repo (`node_modules/`,
+  `volumes/`) and in `~/.ollama/models/`.
+- **`traceable_results`** — verified: every search hit has file,
+  `start_line`, `end_line`, and score.
+- **`no_source_dependency`-adjacent** — indirectly noted: 41 files
+  indexed of 148 tracked (node_modules and other deps not present, and
+  ignore patterns filter out dependency-shape directories by default).
+  Full probe follows in Wave 3.
+- **`agents_md_instructions`** — not yet directly probed; MCP tool list
+  is scheduled for Wave 2.
 
 ---
 

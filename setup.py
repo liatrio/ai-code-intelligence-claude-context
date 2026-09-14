@@ -6,9 +6,10 @@ Contract (#75 across the family):
 
   * Verifies environment: node, npm, docker, docker compose, ollama.
   * Refuses to proceed if any FORBIDDEN_ENV_VARS is set (see versions.env).
-  * Installs pinned claude-context MCP + core packages into .cache/node_modules
-    without touching global node_modules and without writing into the
-    fixture repository.
+  * Installs pinned claude-context MCP + core packages into ./node_modules
+    (via root-level package.json — Node ESM needs this to resolve
+    @zilliz/* from a helper script), without touching global node_modules
+    and without writing into the fixture repository.
   * Boots the pinned Milvus (standalone) stack via docker compose, bound to
     127.0.0.1 only.
   * Pulls the pinned Ollama embedding model.
@@ -55,7 +56,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 VERSIONS_ENV_PATH = REPO_ROOT / "versions.env"
 TOOLS_LOCK_PATH = REPO_ROOT / "tools.lock.json"
 COMPOSE_PATH = REPO_ROOT / "docker-compose.yml"
-NODE_MODULES_PREFIX = REPO_ROOT / ".cache"
+NODE_MODULES_PREFIX = REPO_ROOT  # root-level package.json + ./node_modules (see setup notes below)
 
 # JSON summary lines are prefixed with this sentinel so the harness can
 # `grep -E '^{"summary":' setup.py.log | tail -1` without accidentally
@@ -217,29 +218,27 @@ def _run(argv: list[str], *, cwd: Path | None = None, env: dict[str, str] | None
 
 
 def npm_install() -> CheckResult:
-    """Install the pinned MCP + core into .cache/node_modules."""
-    NODE_MODULES_PREFIX.mkdir(parents=True, exist_ok=True)
-    pkg = NODE_MODULES_PREFIX / "package.json"
+    """Install the pinned MCP + core from the root-level package.json.
+
+    Root-level `package.json` declares `"type": "module"` and lists both
+    pinned deps at exact versions. `npm install` writes to `./node_modules/`
+    at the repo root so Node's ESM resolver can find them when running
+    `bin/index-fixture.mjs` — no NODE_PATH trickery. The lab's isolation
+    intent is preserved by `.gitignore`, which excludes `node_modules/`.
+    """
+    pkg = REPO_ROOT / "package.json"
     if not pkg.exists():
-        pkg.write_text(json.dumps({"private": True, "name": "cc-lab-cache"}, indent=2))
-    mcp = f"@zilliz/claude-context-mcp@{pin('CLAUDE_CONTEXT_MCP_VERSION')}"
-    core = f"@zilliz/claude-context-core@{pin('CLAUDE_CONTEXT_CORE_VERSION')}"
+        return CheckResult(False, f"root package.json missing at {pkg}")
     proc = _run(
-        [
-            "npm",
-            "install",
-            "--no-audit",
-            "--no-fund",
-            "--loglevel=error",
-            mcp,
-            core,
-        ],
-        cwd=NODE_MODULES_PREFIX,
+        ["npm", "install", "--no-audit", "--no-fund", "--loglevel=error"],
+        cwd=REPO_ROOT,
         timeout=600,
     )
     if proc.returncode != 0:
         return CheckResult(False, f"npm install failed: {proc.stderr.strip()[:500]}")
-    return CheckResult(True, f"OK: installed {mcp} and {core} into {NODE_MODULES_PREFIX}/node_modules")
+    mcp = f"@zilliz/claude-context-mcp@{pin('CLAUDE_CONTEXT_MCP_VERSION')}"
+    core = f"@zilliz/claude-context-core@{pin('CLAUDE_CONTEXT_CORE_VERSION')}"
+    return CheckResult(True, f"OK: installed {mcp} and {core} into {REPO_ROOT}/node_modules")
 
 
 def docker_compose_up() -> CheckResult:
@@ -328,40 +327,48 @@ def _mcp_env() -> dict[str, str]:
 
 
 def _mcp_cmd() -> list[str]:
-    """Command line that spawns the pinned MCP server from .cache/node_modules."""
+    """Command line that spawns the pinned MCP server from ./node_modules."""
     return [
         "node",
-        str(NODE_MODULES_PREFIX / "node_modules" / "@zilliz" / "claude-context-mcp" / "dist" / "index.js"),
+        str(REPO_ROOT / "node_modules" / "@zilliz" / "claude-context-mcp" / "dist" / "index.js"),
     ]
 
 
 def mcp_index_fixture(fixture: Path, *, timeout: float = 3600) -> tuple[CheckResult, dict[str, Any]]:
-    """Index a fixture via the MCP `index_codebase` tool.
+    """Index a fixture through the pinned claude-context core.
 
-    Returns (result, timing) where timing has wall-clock seconds and
-    the resolved collection identity.
+    Wave 1 caught that driving `@zilliz/claude-context-mcp` with a raw
+    single-shot JSON-RPC pipe (initialize + tools/call in one stdin
+    payload) stalls, because the SDK's stdio server expects a proper
+    async handshake — initialize → response → `initialized` notification
+    → tools/call. Replicating that handshake in Python with correct
+    read/write interleaving is fiddly, so `setup.py --index` calls a
+    small Node helper (`bin/index-fixture.mjs`) that uses the exact
+    same `Context.indexCodebase(...)` API the MCP server calls
+    internally, with the same embedding + Milvus config wiring.
+
+    The harness (`run-prompts.py`) still drives the *full* MCP surface
+    through Claude Code, because that IS the customer-facing path — this
+    helper only covers the setup / wall-clock probe part.
+
+    Returns (result, timing) where timing has wall-clock seconds, chunk
+    counts, and the resolved collection identity.
     """
     if not fixture.exists():
         return CheckResult(False, f"fixture path missing: {fixture}"), {}
     fixture = fixture.resolve()
     coll = collection_hash_for(fixture)
     head = fixture_git_head(fixture) or "unknown"
-    # We drive the MCP surface via JSON-RPC over stdio: initialize -> tools/call.
-    # This keeps setup.py identical in *shape* to how a Claude Code session
-    # would invoke the tool, so wall-clock here is comparable to the harness.
-    initialize_req = {
-        "jsonrpc": "2.0", "id": 1, "method": "initialize",
-        "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "cc-lab-setup", "version": "0.1"}},
-    }
-    call_req = {
-        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "index_codebase", "arguments": {"path": str(fixture), "force": True}},
-    }
-    payload = json.dumps(initialize_req) + "\n" + json.dumps(call_req) + "\n"
+    helper = REPO_ROOT / "bin" / "index-fixture.mjs"
+    if not helper.exists():
+        return CheckResult(False, f"bin/index-fixture.mjs missing at {helper}"), {}
     started = time.monotonic()
+    # With a root-level package.json declaring `"type": "module"` and both
+    # @zilliz packages in ./node_modules, Node's ESM resolver walks up from
+    # bin/index-fixture.mjs and finds them naturally. No NODE_PATH needed.
     proc = subprocess.run(
-        _mcp_cmd(),
-        input=payload,
+        ["node", str(helper), "--path", str(fixture), "--force"],
+        cwd=str(REPO_ROOT),
         env={**os.environ, **_mcp_env()},
         capture_output=True,
         text=True,
@@ -369,19 +376,38 @@ def mcp_index_fixture(fixture: Path, *, timeout: float = 3600) -> tuple[CheckRes
         check=False,
     )
     wall = time.monotonic() - started
+    helper_result: dict[str, Any] = {}
+    # The helper prints exactly one JSON line to stdout on success or failure.
+    for line in reversed(proc.stdout.splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                helper_result = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
     timing = {
         "fixture": str(fixture),
         "fixture_git_head": head,
         "collection_hash": coll,
         "wall_seconds": round(wall, 3),
-        "mcp_exit_code": proc.returncode,
+        "helper_exit_code": proc.returncode,
+        "helper_result": helper_result,
+        "stderr_tail": proc.stderr.strip()[-500:] if proc.stderr else "",
     }
-    if proc.returncode != 0:
-        return CheckResult(
-            False,
-            f"MCP index_codebase failed after {wall:.1f}s: {proc.stderr.strip()[:500]}",
-        ), timing
-    return CheckResult(True, f"OK: indexed {fixture} in {wall:.1f}s (collection {coll[:12]}...)"), timing
+    if proc.returncode != 0 or not helper_result.get("ok"):
+        err = helper_result.get("error") or proc.stderr.strip()[:500] or "unknown error"
+        return CheckResult(False, f"index-fixture.mjs failed after {wall:.1f}s: {err}"), timing
+    indexed_files = helper_result.get("indexed_files")
+    total_chunks = helper_result.get("total_chunks")
+    return (
+        CheckResult(
+            True,
+            f"OK: indexed {fixture} in {wall:.1f}s "
+            f"({indexed_files} files, {total_chunks} chunks, collection {coll[:12]}...)",
+        ),
+        timing,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -475,7 +501,7 @@ def cmd_clean(_args: argparse.Namespace) -> int:
     steps: list[str] = []
     res = docker_compose_down()
     steps.append(f"docker_compose_down={'ok' if res.ok else 'fail'}")
-    for target in [NODE_MODULES_PREFIX, REPO_ROOT / "volumes"]:
+    for target in [REPO_ROOT / "node_modules", REPO_ROOT / "volumes", REPO_ROOT / ".cache"]:
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
             steps.append(f"removed={target.name}")
@@ -504,7 +530,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
             ollama_up = True
     except OSError:
         pass
-    mcp_installed = (NODE_MODULES_PREFIX / "node_modules" / "@zilliz" / "claude-context-mcp" / "package.json").exists()
+    mcp_installed = (REPO_ROOT / "node_modules" / "@zilliz" / "claude-context-mcp" / "package.json").exists()
     state = {
         "milvus_up": milvus_up,
         "ollama_up": ollama_up,

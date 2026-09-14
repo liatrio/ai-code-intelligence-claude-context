@@ -232,7 +232,7 @@ def load_versions_env() -> dict[str, str]:
 def mcp_config_for(fixture: Path) -> dict[str, Any]:
     """Emit an mcp-config JSON that claude-code will consume for Arm B."""
     vers = load_versions_env()
-    mcp_entry = str(REPO_ROOT / ".cache" / "node_modules" / "@zilliz" / "claude-context-mcp" / "dist" / "index.js")
+    mcp_entry = str(REPO_ROOT / "node_modules" / "@zilliz" / "claude-context-mcp" / "dist" / "index.js")
     return {
         "mcpServers": {
             "claude-context": {
