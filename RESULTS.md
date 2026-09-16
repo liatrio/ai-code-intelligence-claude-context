@@ -547,11 +547,156 @@ Total wall clock for all 10 sessions: 7 min 15 s.
   arms pass all five, claude-context arm is 19.8 % cheaper on
   total cost with 33.7 % fewer cache-creation tokens. Update note
   to add lab receipt.
-- **`traceable_results`** — reconfirmed. Every claude-context arm
-  session's transcript shows `search_code` returning
-  `relativePath:startLine-endLine` triples that flow directly
-  into the model's file citations. Answers like "`features/deduction.js:17-95`"
-  come straight from MCP result payloads.
+- **`traceable_results`** — reconfirmed on P5 where `search_code`
+  was actually called; other prompts inherited the same shape from
+  Read/Grep output. When the tool runs, results carry `file:startLine-endLine`
+  and score, exactly as advertised.
+
+## Wave 6 — 5-prompt harness × 2 arms on liatrio-knowledge
+
+**Status**: complete (2026-09-14)
+
+Fixture: `~/liatrio/repos/liatrio-knowledge` — 5,370 tracked files;
+**2,126 indexed by claude-context defaults** (TS/TSX/JS/MD;
+`.txt`, `.yaml`, `.feature`, `.sql` are outside
+DEFAULT_SUPPORTED_EXTENSIONS). **44,467 chunks** in the hybrid
+collection (`hybrid_code_chunks_8e870251`). **Wall clock to index:
+27 min 22 s** on this laptop (Ollama embedding was the bottleneck;
+zero API cost). Harness wall clock: **17 min 37 s** across the 10
+sessions.
+
+### Per-session numbers
+
+| Prompt | Arm             | Wall     | Cost       | Search_code | Agent | Read | Grep | Grade |
+|-------:|-----------------|---------:|-----------:|------------:|------:|-----:|-----:|:-----:|
+| P1     | baseline        |  28.5 s  |  $0.4489   |         n/a |     0 |    2 |    4 | pass  |
+| P1     | claude-context  |  24.5 s  |  $0.3187   |       **0** |     0 |    0 |    4 | pass  |
+| P2     | baseline        | 134.6 s  |  $1.3696   |         n/a |     1 |   14 |    7 | pass  |
+| P2     | claude-context  |  33.7 s  |  $0.5260   |       **0** |     0 |    2 |    3 | pass  |
+| P3     | baseline        |  42.8 s  |  $0.6128   |         n/a |     0 |    4 |    5 | partial |
+| P3     | claude-context  |  36.8 s  |  $0.5611   |       **0** |     0 |    8 |    2 | partial |
+| P4     | baseline        | 355.6 s  |  $2.4225   |         n/a |     1 |   37 |   28 | pass  |
+| P4     | claude-context  | 216.0 s  | **$10.7553** |     **0** |**11** |   82 |   58 | pass  |
+| P5     | baseline        |  77.3 s  |  $0.9282   |         n/a |     0 |    6 |    5 | pass  |
+| P5     | claude-context  | 106.0 s  |  $1.3261   |       **2** |     0 |    5 |    6 | pass  |
+
+### Aggregates
+
+| Metric              | Baseline    | Claude-context | Δ       |
+|---------------------|------------:|---------------:|--------:|
+| Total wall (s)      |      638.9  |          417.0 | **−34.7 %** |
+| **Total cost (USD)**|    **$5.78**|     **$13.49** | **+133 %** |
+| Total output tokens |     26,971  |         16,801 |  −37.7 % |
+| Cache creation      |    166,185  |        161,454 |   −2.8 % |
+| Cache read          |  1,763,779  |      1,218,586 |  −30.9 % |
+| **Pass rate**       | 4 pass + 1 partial | 4 pass + 1 partial | tie |
+| **`search_code` calls** | **n/a** |     **2 (only P5)** | — |
+
+### The headline finding: the model barely reaches for the tool
+
+Across all 10 claude-context sessions on gratibot (Wave 5) and 10
+on liatrio-knowledge (Wave 6), **only 2 sessions ever called
+`search_code`** — both on P5, the frozen discriminator prompt on
+liatrio-knowledge. **0 of 25 prompts** on gratibot called it. **0
+of 20 non-P5 prompts** across both fixtures called it.
+
+This upends the naive reading of Wave 5. The 20 % cost saving
+gratibot showed was **not** driven by semantic search. It was
+prompt-cache noise — the two arms took broadly similar Read/Grep
+paths and the MCP tool's presence changed which pieces got cached
+where. When we look for actual `search_code` invocations, gratibot
+has zero.
+
+Reasons this is happening, in order of likelihood:
+
+1. **No AGENTS.md in the fixture points the agent at
+   `search_code`.** The claude-context PoC ships `AGENTS.snippet.md`
+   in its own repo, but the harness spawns Claude Code with
+   `cwd=$fixture`, so the model reads gratibot's or
+   liatrio-knowledge's AGENTS.md (neither of which mentions
+   claude-context). This is the exact behaviour the current
+   `agents_md_instructions = no` cell predicts, and Wave 6 gives
+   it a direct receipt.
+2. **The MCP tool description is generic.** Claude Code lists the
+   tool as "Search code semantically" without cost/latency guidance,
+   and the model defaults to the deterministic Grep/Read pair it
+   knows.
+3. **Grep is genuinely competent on gratibot.** With 195 files, a
+   handful of well-chosen Greps solves every prompt, so the model's
+   default heuristic (`when unsure, grep`) works.
+
+### Per-prompt reading
+
+- **P1, P2, P3**: near-parity between arms. Both find the same
+  answers via Grep/Read; small cost deltas are noise. **P3 is a
+  double partial**: neither arm crossed the pass-condition's
+  language boundary — LK has TS + SQL + MDX privacy-classification
+  hits (verified — see `bot/supabase/migrations/019_user_privacy_settings.sql`,
+  `docs/philosophy.md`, etc.), but both arms stayed in TypeScript.
+  Baseline missed because Grep defaults excluded `.sql`; claude-context
+  missed because it never used `search_code` (which had `.md`
+  chunks indexed and would have surfaced them).
+
+- **P4 is the cost trap**. Both arms pass — claude-context's answer
+  is arguably more comprehensive (traces slash-command subcommands
+  the baseline skipped) — but the claude-context arm burned $10.76
+  by dispatching **11 sub-agents** for parallel exploration instead
+  of calling `search_code` once. Baseline paid $2.42 for a similar
+  answer. Wall clock was faster on claude-context (216 s vs 356 s)
+  because parallelism helped, but the cost-per-answer went the wrong
+  way. **This is a customer-facing pathology**: on large fixtures,
+  Claude Code with `search_code` available may still choose
+  sub-agent orchestration and pay for it.
+
+- **P5 is the discriminator, and it revealed the tool working.**
+  This is the ONLY session on either fixture where `search_code`
+  was actually used — twice, both with natural-language queries
+  ("prevent the same action from being applied twice by the same
+  user within a short time window", and "in-memory set of recently
+  processed keys with time-to-live"). The model landed on the
+  `brain_message_drilldowns` guard + `claim_drilldown_slot` RPC
+  correctly. Baseline **also** landed on the same guard via Grep
+  (`idempotent`, `duplicate`, `rate.?limit`), so correctness is
+  tied. **Cost went the wrong way** ($0.93 baseline vs $1.33
+  claude-context) — using the semantic tool didn't save money here
+  because the model still ran Grep + Read alongside it.
+
+### Cells this wave settles or updates
+
+- **`token_saving`** — needs revision. The Wave 5 headline of
+  "−20 % cost on gratibot" **was not driven by semantic search** —
+  it was prompt-cache noise. When we measure actual `search_code`
+  use, it happens 2 / 20 times across two fixtures. When it does
+  fire (P5 LK), it costs more (not less) than the Grep baseline
+  because it runs alongside Grep, not instead of it. Vendor's
+  ~39 % claim is probably real in their harness (they presumably
+  wire the agent to prefer the tool); it does not reproduce with
+  Claude Code defaults on either fixture.
+- **`roi_evidence`** — needs revision. ROI is heavily gated by
+  whether the customer wires `search_code` into an AGENTS.md /
+  system prompt. Out of the box the tool is functionally
+  invisible to Claude Code. This is the single most important
+  finding the lab produced.
+- **`agents_md_instructions`** — reconfirmed as `no`, with a much
+  stronger lab receipt: without AGENTS guidance, the model uses
+  the MCP tool ~10 % of the time on the prompt it's most designed
+  for and ~0 % elsewhere.
+- **`no_source_dependency`** — reconfirmed. LK has 208 `.sql`
+  files and 176 `.feature` files that fall outside the default
+  supported extensions, so they're invisible to `search_code`.
+  The P3 cross-language miss is a direct consequence.
+- **`traceable_results`** — reconfirmed on P5 (the only real
+  invocation). File:line-range citations flowed through
+  correctly.
+
+### Was Wave 6 worth the $19.27?
+
+Yes, clearly. Wave 5 alone would have generated a misleadingly
+positive story ("claude-context saves 20 % on cost"). Wave 6
+reveals **why** the mechanism didn't fire in Wave 5 either, and
+that the customer story is really about tool-discovery, not
+about semantic search's raw quality. That's a different (and more
+actionable) recommendation for a Liatrio engagement.
 
 ---
 

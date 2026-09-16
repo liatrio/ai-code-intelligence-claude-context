@@ -57,10 +57,16 @@ Both fixtures are addressed by absolute path (`--fixture` on `setup.py
   `service/recognition.js` or the nearest owning module) OR names the
   two closest primitives it would be built from and calls out that no
   single-helper exists.
-- On `liatrio-knowledge`: same shape against whichever domain object
-  the fixture models (issue counts, doc-view counts, sprint
-  velocity — one clean pass condition per fixture, decided at Wave 6
-  before results are graded).
+- On `liatrio-knowledge` (frozen 2026-09-14, pre-Wave-6): the
+  gratibot-specific concept of "gratitudes received in the last N
+  days" does not exist. Pass = (a) unambiguously says no
+  gratitudes/recognitions helper exists in this codebase, AND (b)
+  names at least one closest-analog counting helper for whichever
+  domain object the fixture actually models — meeting ingests, drafts
+  submitted, voice-profile training runs, LinkedIn imports, Slack
+  messages processed, or similar — with a file:line citation.
+  Naming only "no such helper" without a closest-analog is a partial
+  pass; missing both is a fail.
 
 ## Prompt 3 — Cross-language / mixed-file concept
 
@@ -91,8 +97,15 @@ Both fixtures are addressed by absolute path (`--fixture` on `setup.py
   → `insertOne` in `service/recognition.js`) and the deduction path
   (`service/deduction.js:createDeduction`). Missing one is a partial
   pass; missing both is a fail.
-- On `liatrio-knowledge`: whatever the fixture equivalent is (Slack
-  event ingest → DB write); decided at Wave 6 pre-grade.
+- On `liatrio-knowledge` (frozen 2026-09-14, pre-Wave-6): the fixture
+  IS a Slack-first agent framework with Supabase persistence, so this
+  prompt maps directly. Pass = names at least two distinct Slack
+  event handlers under `bot/` that persist to Supabase, drawn from
+  different event families (e.g., one `message`/`app_mention` and one
+  `view_submission`/`block_actions`/`app_home_opened`). Each must
+  cite `file:line-range` and one sentence naming the table or row
+  shape written. Naming only one event family is a partial pass;
+  missing all Slack-event-to-DB paths is a fail.
 
 ## Prompt 5 — Discriminator (semantic > grep)
 
