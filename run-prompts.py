@@ -170,11 +170,14 @@ def _clean_question(text: str) -> str:
             continue
         if s.startswith(">"):
             s = s.lstrip("> ").strip()
-        # Strip surrounding quotes if the prompt is written as > "..."
-        if s.startswith('"') and s.endswith('"'):
-            s = s[1:-1]
         lines.append(s)
-    return " ".join(lines).strip()
+    result = " ".join(lines).strip()
+    # Strip surrounding quotes if the whole prompt was written as > "..."
+    # spanning multiple lines (the per-line check misses the wrap-around
+    # case). Only strip when both ends match — never inside the string.
+    if result.startswith('"') and result.endswith('"'):
+        result = result[1:-1]
+    return result
 
 
 # --------------------------------------------------------------------------

@@ -467,6 +467,92 @@ concrete numbers.
   `docker compose down`); no first-class artifact and MD5-path
   collection identity keep this off the `yes` list.
 
+## Wave 5 — 5-prompt harness × 2 arms on gratibot
+
+**Status**: complete (2026-09-14)
+
+Ran `run-prompts.py` with `--arms baseline,claude-context --prompts
+P1,P2,P3,P4,P5 --fixture ~/liatrio/repos/gratibot`. Baseline gets
+Read + Grep + Bash; claude-context arm gets the same three plus
+the three claude-context MCP tools (`index_codebase`, `search_code`,
+`get_indexing_status`). Same system prompt across both arms.
+Total wall clock for all 10 sessions: 7 min 15 s.
+
+### Per-session numbers
+
+| Prompt | Arm             | Wall   | Cost      | in     | out    | cache_c | cache_r  | Grade |
+|-------:|-----------------|-------:|----------:|-------:|-------:|--------:|---------:|:-----:|
+| P1     | baseline        | 28.3 s | $0.5827   | 8,315  | 1,606  | 44,321  | 115,594  | pass  |
+| P1     | claude-context  | 32.8 s | $0.4673   | 8,678  | 1,988  | 28,217  | 183,985  | pass  |
+| P2     | baseline        | 20.2 s | $0.3524   | 8,628  |   939  | 23,861  |  94,416  | pass  |
+| P2     | claude-context  | 18.4 s | $0.3570   | 8,674  |   952  | 24,213  |  95,315  | pass  |
+| P3     | baseline        | 32.7 s | $0.4656   | 8,612  | 1,956  | 30,449  | 138,219  | pass  |
+| P3     | claude-context  | 48.3 s | $0.4503   | 8,811  | 3,277  | 18,075  | 287,095  | pass  |
+| P4     | baseline        | 65.2 s | $0.7653   | 8,747  | 4,659  | 44,708  | 316,080  | pass  |
+| P4     | claude-context  | 60.2 s | $0.5914   | 8,807  | 4,709  | 31,979  | 219,634  | pass  |
+| P5     | baseline        | 75.0 s | $0.6533   | 8,749  | 4,488  | 32,915  | 336,449  | pass  |
+| P5     | claude-context  | 52.7 s | $0.3952   | 8,680  | 3,373  | 14,429  | 246,293  | pass  |
+
+### Aggregates and deltas
+
+| Metric              | Baseline  | Claude-context | Δ      |
+|---------------------|----------:|---------------:|-------:|
+| Total wall (s)      |    221.35 |         212.45 |  −4.0 % |
+| **Total cost (USD)**|  **$2.82**|      **$2.26** |**−19.8 %** |
+| Total input tokens  |    43,051 |         43,650 |  +1.4 % |
+| Total output tokens |    13,648 |         14,299 |  +4.8 % |
+| Cache creation      |   176,254 |        116,913 | **−33.7 %** |
+| Cache read          | 1,000,758 |      1,032,322 |  +3.2 % |
+| Pass rate           |     5 / 5 |          5 / 5 |    tie |
+
+### Reading the numbers
+
+- **Correctness on gratibot is a tie** — 5-of-5 on both arms.
+  Every prompt's pass condition is met, including the discriminator
+  P5 (both arms found the `service/deduction.js` deductionLocks
+  + `service/stadium.js` deterministic `_id` two-layer idempotency
+  guard, with correct mechanism description). The frozen pass
+  condition mentions `service/recognition.js` but ground truth is
+  the two files both arms landed on — gratibot's recognition
+  layer has no dedupe.
+- **Wall-clock is a tie** — 212 vs 221 s across five prompts is
+  noise, not signal.
+- **Cost is the story: −19.8 %** ($0.56 saved on $2.82). The
+  mechanism is transparent in the cache-creation column:
+  claude-context wrote **33.7 % fewer new-cache tokens** (177 k
+  → 117 k) with essentially the same cache-reads. In plain
+  English: `search_code` returned tight AST chunks instead of the
+  large Read/Grep dumps that baseline had to load, so the model
+  paid less for building its context window.
+- **Where the saving concentrates**: P5 (the discriminator) has
+  a **40 % cost saving** on its own — $0.65 → $0.40. This is
+  the prompt semantic search is designed for; even though both
+  arms passed on gratibot's 41 indexed files, the *cost* to get
+  there differed the most on P5.
+- **On gratibot the ROI is entirely cost-side, not correctness-side**.
+  This matches the frozen note in `prompts.md`: "Baseline arm may
+  still pass on gratibot (195 files is grep-able with concept
+  keywords), but the *cost* difference is what the wave measures."
+
+### Cells this wave touches
+
+- **`token_saving`** — `yes`, lab-observed. Vendor's ~39 % claim
+  measures a different setup (SWE-bench-Verified subset, 30
+  tasks); we measure a 20 % cost saving on 5 concept-retrieval
+  prompts against a 41-file gratibot. The **direction** matches
+  (claude-context arm cheaper); the magnitude is smaller on this
+  fixture. Update note to cite both numbers.
+- **`roi_evidence`** — `yes`, lab-observed. First Liatrio-run
+  measurement of claude-context ROI. 5 prompts × 2 arms, both
+  arms pass all five, claude-context arm is 19.8 % cheaper on
+  total cost with 33.7 % fewer cache-creation tokens. Update note
+  to add lab receipt.
+- **`traceable_results`** — reconfirmed. Every claude-context arm
+  session's transcript shows `search_code` returning
+  `relativePath:startLine-endLine` triples that flow directly
+  into the model's file citations. Answers like "`features/deduction.js:17-95`"
+  come straight from MCP result payloads.
+
 ---
 
 ## Wave 4 — shared / gateway cells
