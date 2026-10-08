@@ -75,7 +75,7 @@ git clone https://github.com/liatrio/gratibot.git ~/liatrio/repos/gratibot
 Bring up the local stack and index the fixture:
 
 ```bash
-make check                                                # env gate
+make check                                                # env gate + pin agreement
 make install                                              # npm + docker compose + ollama pull
 python3 setup.py --index --fixture ~/liatrio/repos/gratibot
 ```
@@ -97,6 +97,26 @@ make clean
 - Wave-by-wave rationale and probe details: [`RESULTS.md`](RESULTS.md).
 - Cells settled by the lab: [`research/claude-context/data.json`](https://github.com/liatrio/ai-code-intelligence/blob/main/research/claude-context/data.json).
 - Cell rationale: [`research/claude-context/answers.md`](https://github.com/liatrio/ai-code-intelligence/blob/main/research/claude-context/answers.md).
+
+## CI
+
+`.github/workflows/ci.yml` installs the pinned tool, runs `python3 setup.py --check`,
+runs a keyless smoke (Milvus and Ollama up, MCP tool listing, and indexing `bin/` through the pinned core), and always tears down. It runs on
+pull requests, on pushes to `main`, by hand (`workflow_dispatch`), and weekly
+(Mondays 06:19 UTC), so a pin that stops resolving upstream shows up even when
+nobody is touching the repo.
+
+When a scheduled run fails, the `notify-failure` job opens an issue labelled
+`ci-failure`, or comments on the one already open. Close it once `main` is
+green again.
+
+Dependabot (`.github/dependabot.yml`) checks GitHub Actions, npm (transitive dependencies only) and docker-compose weekly.
+Patch and minor updates auto-merge once the `check` job passes. That needs
+**Allow auto-merge** turned on and `check` set as a required status check on
+`main`. Until both are set, the auto-merge job logs a warning and leaves the PR
+for a human. The tool pins in `versions.env` and `tools.lock.json` are not
+Dependabot-tracked. The weekly run is what tells you one has stopped
+resolving. Bumping a pin changes what was scored, so it stays a manual change.
 
 ## Licence
 

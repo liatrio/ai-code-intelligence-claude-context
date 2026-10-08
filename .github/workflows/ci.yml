@@ -1,0 +1,116 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "19 6 * * 1" # weekly; minute staggered per lab repo
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      OLLAMA_VERSION: 0.40.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install Ollama (CI pin, not a lab pin)
+        run: |
+          curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="$OLLAMA_VERSION" sh
+          # The systemd service can lag the installer; wait so `ollama pull` can connect.
+          for _ in $(seq 60); do curl -sf http://127.0.0.1:11434/api/version && exit 0; sleep 1; done
+          echo "::error::ollama server did not come up"; exit 1
+      - name: Pins agree
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          env = {}
+          for line in open("versions.env"):
+              line = line.strip()
+              if line and not line.startswith("#") and "=" in line:
+                  k, v = line.split("=", 1)
+                  env[k.strip()] = v.strip()
+          lock = json.load(open("tools.lock.json"))
+          pairs = [
+              ("CLAUDE_CONTEXT_MCP_VERSION vs tools.lock", env["CLAUDE_CONTEXT_MCP_VERSION"], lock["claude_context_mcp"]["version"]),
+              ("CLAUDE_CONTEXT_CORE_VERSION vs tools.lock", env["CLAUDE_CONTEXT_CORE_VERSION"], lock["claude_context_core"]["version"]),
+              ("MILVUS_VERSION vs tools.lock", env["MILVUS_VERSION"], lock["milvus"]["version"]),
+              ("MILVUS_ETCD_VERSION vs tools.lock", env["MILVUS_ETCD_VERSION"], lock["milvus_etcd"]["version"]),
+              ("MILVUS_MINIO_VERSION vs tools.lock", env["MILVUS_MINIO_VERSION"], lock["milvus_minio"]["version"]),
+              ("MILVUS_MINIO_DIGEST vs tools.lock", env["MILVUS_MINIO_DIGEST"], lock["milvus_minio"]["digest"]),
+              ("OLLAMA_EMBEDDING_MODEL vs tools.lock", env["OLLAMA_EMBEDDING_MODEL"], lock["ollama_embedding_model"]["model"]),
+              ("OLLAMA_EMBEDDING_TAG vs tools.lock", env["OLLAMA_EMBEDDING_TAG"], lock["ollama_embedding_model"]["tag"]),
+          ]
+          bad = [p for p in pairs if p[1] != p[2]]
+          for name, a, b in bad:
+              print(f"::error::{name}: {a!r} != {b!r}")
+          print(f"{len(pairs) - len(bad)}/{len(pairs)} pin pairs agree")
+          sys.exit(1 if bad else 0)
+          PY
+      - name: Install pinned tools
+        run: python3 setup.py --install
+      - name: Check
+        run: python3 setup.py --check
+      - name: Smoke
+        run: |
+          python3 setup.py --status
+          node bin/mcp-tools-probe.mjs
+          # bin/ is all .mjs, which claude-context skips by default; fail on an empty index.
+          out="$(CUSTOM_EXTENSIONS=.mjs python3 setup.py --index --fixture "$GITHUB_WORKSPACE/bin")"
+          echo "$out"
+          grep -Eq '\([1-9][0-9]* files, [1-9][0-9]* chunks' <<<"$out" || { echo "::error::index smoke embedded nothing"; exit 1; }
+      - name: Teardown
+        if: always()
+        run: |
+          rc=0
+          python3 setup.py --clean || rc=1
+          docker compose -f docker-compose.yml down -v --remove-orphans || true
+          sudo rm -rf volumes
+          sudo systemctl stop ollama || true
+          exit $rc
+
+  notify-failure:
+    name: notify-failure
+    needs: check
+    # always(): a timed-out or cancelled check must report too, not only failure().
+    if: always() && github.event_name == 'schedule' && needs.check.result != 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the ci-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CHECK_RESULT: ${{ needs.check.result }}
+        run: |
+          set -euo pipefail
+          gh label create ci-failure --color B60205 --description "Scheduled CI run failed" 2>/dev/null || true
+          body="Scheduled \`check\` run ${CHECK_RESULT} on \`${GITHUB_SHA::7}\`: ${RUN_URL}"
+          issue="$(gh issue list --label ci-failure --state open --limit 1 --json number --jq '.[0].number // empty')"
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --title "Scheduled CI is failing" --label ci-failure \
+              --body "$body"$'\n\n'"Close this once main is green again. The next scheduled failure opens a new issue."
+          fi

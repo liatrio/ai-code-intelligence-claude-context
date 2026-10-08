@@ -5,6 +5,8 @@ setup.py — install and drive the fully-local claude-context path for the lab.
 Contract (#75 across the family):
 
   * Verifies environment: node, npm, docker, docker compose, ollama.
+  * `--check` also verifies pin agreement: versions.env against package.json,
+    package-lock.json, docker-compose.yml and any installed node_modules.
   * Refuses to proceed if any FORBIDDEN_ENV_VARS is set (see versions.env).
   * Installs pinned claude-context MCP + core packages into ./node_modules
     (via root-level package.json — Node ESM needs this to resolve
@@ -190,9 +192,53 @@ def check_ollama() -> CheckResult:
     return CheckResult(True, f"OK: {out}")
 
 
+def check_pins() -> CheckResult:
+    """Declared pins agree across versions.env, package.json, the lock and compose;
+    installed node_modules match when present."""
+    problems: list[str] = []
+    want = {
+        "@zilliz/claude-context-mcp": pin("CLAUDE_CONTEXT_MCP_VERSION"),
+        "@zilliz/claude-context-core": pin("CLAUDE_CONTEXT_CORE_VERSION"),
+    }
+    pkg = json.loads((REPO_ROOT / "package.json").read_text())
+    lock_path = REPO_ROOT / "package-lock.json"
+    lock = json.loads(lock_path.read_text()) if lock_path.exists() else {}
+    for name, version in want.items():
+        declared = pkg.get("dependencies", {}).get(name)
+        if declared != version:
+            problems.append(f"package.json {name}={declared!r}, versions.env wants {version}")
+        locked = lock.get("packages", {}).get(f"node_modules/{name}", {}).get("version")
+        if lock and locked != version:
+            problems.append(f"package-lock.json {name}={locked!r}, want {version}")
+        installed = REPO_ROOT / "node_modules" / name / "package.json"
+        if installed.exists():
+            got = json.loads(installed.read_text()).get("version")
+            if got != version:
+                problems.append(f"installed {name}={got!r}, want {version}")
+    compose = COMPOSE_PATH.read_text()
+    for image_key, version_key in [
+        ("MILVUS_IMAGE", "MILVUS_VERSION"),
+        ("MILVUS_ETCD_IMAGE", "MILVUS_ETCD_VERSION"),
+        ("MILVUS_MINIO_IMAGE", "MILVUS_MINIO_VERSION"),
+    ]:
+        ref = f"{pin(image_key)}:{pin(version_key)}"
+        digest_key = version_key.replace("_VERSION", "_DIGEST")
+        if digest_key in VERSIONS:
+            ref += f"@{pin(digest_key)}"
+        if f"image: {ref}\n" not in compose:
+            problems.append(f"docker-compose.yml does not use {ref}")
+    model = f"{pin('OLLAMA_EMBEDDING_MODEL')}:{pin('OLLAMA_EMBEDDING_TAG')}"
+    if pin("EMBEDDING_MODEL") != model:
+        problems.append(f"EMBEDDING_MODEL={pin('EMBEDDING_MODEL')!r}, want {model}")
+    if problems:
+        return CheckResult(False, "; ".join(problems))
+    return CheckResult(True, "OK: package.json, package-lock.json, docker-compose.yml and node_modules match versions.env")
+
+
 def run_all_checks() -> list[tuple[str, CheckResult]]:
     return [
         ("forbidden_env_vars", check_forbidden_env_vars()),
+        ("pins", check_pins()),
         ("node", check_node()),
         ("docker", check_docker()),
         ("ollama", check_ollama()),
@@ -273,7 +319,7 @@ def docker_compose_down() -> CheckResult:
 
 
 def ollama_pull() -> CheckResult:
-    model = pin("OLLAMA_EMBEDDING_MODEL")
+    model = f"{pin('OLLAMA_EMBEDDING_MODEL')}:{pin('OLLAMA_EMBEDDING_TAG')}"
     proc = _run(["ollama", "pull", model], timeout=1800)
     if proc.returncode != 0:
         return CheckResult(False, f"ollama pull {model} failed: {proc.stderr.strip()[:500]}")
