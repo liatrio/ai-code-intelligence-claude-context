@@ -69,7 +69,10 @@ jobs:
         run: |
           python3 setup.py --status
           node bin/mcp-tools-probe.mjs
-          python3 setup.py --index --fixture "$GITHUB_WORKSPACE/bin"
+          # bin/ is all .mjs, which claude-context skips by default; fail on an empty index.
+          out="$(CUSTOM_EXTENSIONS=.mjs python3 setup.py --index --fixture "$GITHUB_WORKSPACE/bin")"
+          echo "$out"
+          grep -Eq '\([1-9][0-9]* files, [1-9][0-9]* chunks' <<<"$out" || { echo "::error::index smoke embedded nothing"; exit 1; }
       - name: Teardown
         if: always()
         run: |
