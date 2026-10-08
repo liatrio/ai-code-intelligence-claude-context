@@ -53,6 +53,7 @@ jobs:
               ("MILVUS_MINIO_VERSION vs tools.lock", env["MILVUS_MINIO_VERSION"], lock["milvus_minio"]["version"]),
               ("MILVUS_MINIO_DIGEST vs tools.lock", env["MILVUS_MINIO_DIGEST"], lock["milvus_minio"]["digest"]),
               ("OLLAMA_EMBEDDING_MODEL vs tools.lock", env["OLLAMA_EMBEDDING_MODEL"], lock["ollama_embedding_model"]["model"]),
+              ("OLLAMA_EMBEDDING_TAG vs tools.lock", env["OLLAMA_EMBEDDING_TAG"], lock["ollama_embedding_model"]["tag"]),
           ]
           bad = [p for p in pairs if p[1] != p[2]]
           for name, a, b in bad:

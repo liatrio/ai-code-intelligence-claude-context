@@ -31,7 +31,7 @@ async function main() {
     env: {
       ...process.env,
       EMBEDDING_PROVIDER: process.env.EMBEDDING_PROVIDER || "Ollama",
-      EMBEDDING_MODEL: process.env.EMBEDDING_MODEL || "nomic-embed-text",
+      EMBEDDING_MODEL: process.env.EMBEDDING_MODEL || "nomic-embed-text:v1.5",
       EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL || "http://127.0.0.1:11434",
       MILVUS_ADDRESS: process.env.MILVUS_ADDRESS || "127.0.0.1:19530",
     },

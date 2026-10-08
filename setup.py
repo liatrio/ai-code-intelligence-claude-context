@@ -227,6 +227,9 @@ def check_pins() -> CheckResult:
             ref += f"@{pin(digest_key)}"
         if f"image: {ref}\n" not in compose:
             problems.append(f"docker-compose.yml does not use {ref}")
+    model = f"{pin('OLLAMA_EMBEDDING_MODEL')}:{pin('OLLAMA_EMBEDDING_TAG')}"
+    if pin("EMBEDDING_MODEL") != model:
+        problems.append(f"EMBEDDING_MODEL={pin('EMBEDDING_MODEL')!r}, want {model}")
     if problems:
         return CheckResult(False, "; ".join(problems))
     return CheckResult(True, "OK: package.json, package-lock.json, docker-compose.yml and node_modules match versions.env")
@@ -316,7 +319,7 @@ def docker_compose_down() -> CheckResult:
 
 
 def ollama_pull() -> CheckResult:
-    model = pin("OLLAMA_EMBEDDING_MODEL")
+    model = f"{pin('OLLAMA_EMBEDDING_MODEL')}:{pin('OLLAMA_EMBEDDING_TAG')}"
     proc = _run(["ollama", "pull", model], timeout=1800)
     if proc.returncode != 0:
         return CheckResult(False, f"ollama pull {model} failed: {proc.stderr.strip()[:500]}")
