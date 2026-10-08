@@ -1,0 +1,47 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Etc/UTC
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: ci
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Etc/UTC
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Lab pins: move with versions.env + tools.lock.json, by hand.
+      - dependency-name: "@zilliz/claude-context-mcp"
+      - dependency-name: "@zilliz/claude-context-core"
+    commit-message:
+      prefix: deps
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Etc/UTC
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Lab pins (Milvus stack): move with versions.env + tools.lock.json, by hand.
+      - dependency-name: "*milvus*"
+      - dependency-name: "*etcd*"
+      - dependency-name: "*minio*"
+    commit-message:
+      prefix: deps
