@@ -33,7 +33,11 @@ jobs:
         with:
           node-version: "22"
       - name: Install Ollama (CI pin, not a lab pin)
-        run: curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="$OLLAMA_VERSION" sh
+        run: |
+          curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="$OLLAMA_VERSION" sh
+          # The systemd service can lag the installer; wait so `ollama pull` can connect.
+          for _ in $(seq 60); do curl -sf http://127.0.0.1:11434/api/version && exit 0; sleep 1; done
+          echo "::error::ollama server did not come up"; exit 1
       - name: Pins agree
         run: |
           python3 - <<'PY'
