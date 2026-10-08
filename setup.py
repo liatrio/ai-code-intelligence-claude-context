@@ -222,7 +222,10 @@ def check_pins() -> CheckResult:
         ("MILVUS_MINIO_IMAGE", "MILVUS_MINIO_VERSION"),
     ]:
         ref = f"{pin(image_key)}:{pin(version_key)}"
-        if f"image: {ref}" not in compose:
+        digest_key = version_key.replace("_VERSION", "_DIGEST")
+        if digest_key in VERSIONS:
+            ref += f"@{pin(digest_key)}"
+        if f"image: {ref}\n" not in compose:
             problems.append(f"docker-compose.yml does not use {ref}")
     if problems:
         return CheckResult(False, "; ".join(problems))

@@ -8,6 +8,13 @@ Wave-by-wave findings from the claude-context lab
 `quay.io/coreos/etcd:v3.5.5`, `minio/minio:RELEASE.2023-03-20T20-16-18Z`,
 Ollama ≥ 0.3.0 with `nomic-embed-text:v1.5` (768-dim).
 
+> **2026-10-08: MinIO pin changed.** MinIO stopped publishing images, so
+> `quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z` no longer pulls (nor does
+> any `minio/minio` tag). The pin is now `milvusdb/minio:RELEASE.2024-12-18T13-15-44Z`
+> (by digest), the Milvus project's mirror that upstream's standalone compose
+> uses. MinIO is only the object store under Milvus, not the tool being scored;
+> the waves below ran on the old pin.
+
 **Fixtures** (both):
 - `liatrio/gratibot` @ `<commit-recorded-in-wave-1>` (public, JS/Node, 195 files, 148 tracked `.js`)
 - `liatrio-labs/liatrio-knowledge` @ `<commit-recorded-in-wave-6>` (private, TS/SQL/Gherkin/Docusaurus, 5,370 tracked files)

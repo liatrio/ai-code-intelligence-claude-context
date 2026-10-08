@@ -44,12 +44,10 @@ services:
 
   minio:
     container_name: cc-lab-minio
-    # Note: MinIO no longer publishes to Docker Hub's `minio/minio` namespace;
-    # the canonical registry is quay.io. Wave 1 caught this — `docker pull
-    # minio/minio` returns "pull access denied for minio/minio, repository
-    # does not exist" even for `:latest`. The tag on quay.io matches the
-    # pinned RELEASE stamp verbatim.
-    image: quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z
+    # MinIO stopped publishing images (Docker Hub and quay.io both refuse
+    # pulls as of 2026-10-08). milvusdb/minio is the Milvus project's mirror,
+    # the same image upstream's standalone compose now uses.
+    image: milvusdb/minio:RELEASE.2024-12-18T13-15-44Z@sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3
     environment:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
@@ -61,7 +59,8 @@ services:
       - ./volumes/minio:/minio_data
     command: minio server /minio_data --console-address ":9001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # This image ships no curl; `mc ready` is upstream's healthcheck.
+      test: ["CMD", "mc", "ready", "local"]
       interval: 30s
       timeout: 20s
       retries: 3
