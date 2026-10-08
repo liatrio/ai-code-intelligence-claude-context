@@ -9,7 +9,7 @@ SETUP := $(PY) setup.py
 
 help:
 	@echo "Targets:"
-	@echo "  make check                      # verify environment prerequisites"
+	@echo "  make check                      # verify environment prerequisites and pin agreement"
 	@echo "  make install                    # npm + docker compose up + ollama pull"
 	@echo "  make index FIXTURE=/abs/path    # index a fixture through the MCP server"
 	@echo "  make status                     # report stack state without side effects"

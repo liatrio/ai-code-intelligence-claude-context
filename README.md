@@ -75,7 +75,7 @@ git clone https://github.com/liatrio/gratibot.git ~/liatrio/repos/gratibot
 Bring up the local stack and index the fixture:
 
 ```bash
-make check                                                # env gate
+make check                                                # env gate + pin agreement
 make install                                              # npm + docker compose + ollama pull
 python3 setup.py --index --fixture ~/liatrio/repos/gratibot
 ```
